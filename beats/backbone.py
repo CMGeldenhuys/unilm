@@ -130,14 +130,16 @@ class TransformerEncoder(nn.Module):
         r = None
         pos_bias = None
         for i, layer in enumerate(self.layers):
+            need_weight_current = not isinstance(tgt_layer, bool) and i == tgt_layer
+            need_weight_all = isinstance(tgt_layer, bool) and tgt_layer
             if self.layer_wise_gradient_decay_ratio != 1.0:
                 x = GradMultiply.apply(x, self.layer_wise_gradient_decay_ratio)
             dropout_probability = np.random.random()
             if not self.training or (dropout_probability > self.layerdrop):
-                x, z, pos_bias = layer(x, self_attn_padding_mask=padding_mask, need_weights=False, pos_bias=pos_bias)
+                x, z, pos_bias = layer(x, self_attn_padding_mask=padding_mask, need_weights=need_weight_current or need_weight_all, pos_bias=pos_bias)
             if tgt_layer is not None:
                 layer_results.append((x, z))
-            if i == tgt_layer:
+            if need_weight_current:
                 r = x
                 break
 
