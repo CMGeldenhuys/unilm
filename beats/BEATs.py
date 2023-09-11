@@ -118,8 +118,8 @@ class BEATs(nn.Module):
     def preprocess(
             self,
             source: torch.Tensor,
-            fbank_mean: float = 15.41663,
-            fbank_std: float = 6.55582,
+            fbank_mean: float = 0,
+            fbank_std: float = 0.5,
     ) -> torch.Tensor:
         fbanks = []
         for waveform in source:
