@@ -130,19 +130,11 @@ class BEATs(nn.Module):
         fbank = (fbank - fbank_mean) / (2 * fbank_std)
         return fbank
 
-    def extract_features(
-            self,
-            source: torch.Tensor,
-            padding_mask: Optional[torch.Tensor] = None,
-            fbank_mean: float = 15.41663,
-            fbank_std: float = 6.55582,
-    ):
-        fbank = self.preprocess(source, fbank_mean=fbank_mean, fbank_std=fbank_std)
-
-        if padding_mask is not None:
-            padding_mask = self.forward_padding_mask(fbank, padding_mask)
-
-        fbank = fbank.unsqueeze(1)
+    def forward(self,
+                fbank: torch.Tensor,
+                padding_mask: Optional[torch.Tensor] = None,
+                return_encoder_layer: Optional[int] = None,
+                ):
         features = self.patch_embedding(fbank)
         features = features.reshape(features.shape[0], features.shape[1], -1)
         features = features.transpose(1, 2)
@@ -159,6 +151,7 @@ class BEATs(nn.Module):
         x, layer_results = self.encoder(
             x,
             padding_mask=padding_mask,
+            layer=return_encoder_layer,
         )
 
         if self.predictor is not None:
@@ -176,4 +169,27 @@ class BEATs(nn.Module):
 
             return lprobs, padding_mask
         else:
-            return x, padding_mask
+            if return_encoder_layer is not None:
+                # layer_results -> [(x_i, attn)]
+                # x_i : output of current layer fed to next layer
+                # attn : attention weights, averaged over heads
+                # index 0: is inputs to encoder layer
+                return x, padding_mask, layer_results[1:]
+            else:
+                return x, padding_mask
+
+    def extract_features(
+            self,
+            source: torch.Tensor,
+            fbank_mean: float = 0,
+            fbank_std: float = 0.5,
+            padding_mask: Optional[torch.Tensor] = None,
+            **kwargs,
+    ):
+        fbank = self.preprocess(source, fbank_mean=fbank_mean, fbank_std=fbank_std)
+
+        if padding_mask is not None:
+            padding_mask = self.forward_padding_mask(fbank, padding_mask)
+        fbank = fbank.unsqueeze(1)
+        return self.forward(fbank, padding_mask=padding_mask, **kwargs)
+
