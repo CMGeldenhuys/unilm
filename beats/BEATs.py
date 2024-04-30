@@ -18,7 +18,7 @@ from .backbone import (
 )
 
 import logging
-from typing import Optional
+from typing import Optional, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +105,31 @@ class BEATs(nn.Module):
             self,
             features: torch.Tensor,
             padding_mask: torch.Tensor,
+            threshold: Literal['any', 'all'] | float = 0.5
     ) -> torch.Tensor:
+        if padding_mask.shape[:2] == features.shape[:2] :
+            return padding_mask
+        
         extra = padding_mask.size(1) % features.size(1)
         if extra > 0:
+            # drop up to extra (endpoints dont match)
             padding_mask = padding_mask[:, :-extra]
+        # Reshape to match feature shape
+        # -1: left over act as downsample/stride
         padding_mask = padding_mask.view(
             padding_mask.size(0), features.size(1), -1
         )
-        padding_mask = padding_mask.all(-1)
+        # if all samples in dim is true, then downsample should be true
+        if threshold == 'all':
+            # consider mask, only if all subtokens were masked
+            padding_mask = padding_mask.all(dim=-1)
+        elif threshold == 'any':
+            # consider mask, if any of the subtokens were masked
+            padding_mask = padding_mask.any(dim=-1)
+        else:
+            # consider mask, if a percentage of subtokens were masked
+            padding_mask = padding_mask.mean(dim=-1, dtype=torch.float) > threshold
+
         return padding_mask
 
     def preprocess(
@@ -133,15 +150,49 @@ class BEATs(nn.Module):
     def forward(self,
                 fbank: torch.Tensor,
                 padding_mask: Optional[torch.Tensor] = None,
+                attn_mask: torch.Tensor | None = None,
                 return_encoder_layer: Optional[int] = None,
                 ):
+        # Divide melspec into patches
         features = self.patch_embedding(fbank)
-        features = features.reshape(features.shape[0], features.shape[1], -1)
+        # B - Batch
+        # C - Channel (default 512)
+        # T - Time patches
+        # M - Mel frequency patches (default 8)
+        B, C, T, M = features.size()
+
+        # Combine mel and time patches
+        features = features.reshape(B, C, -1)
+        # Swap channel and (mel&time) dim
         features = features.transpose(1, 2)
-        features = self.layer_norm(features)
+        # (B, T*M, C)
+
 
         if padding_mask is not None:
+            # Expand out mel and time dim
+            features = features.reshape(B, T, M, C)
+            # (B, T, M, C)
+            # Downsample padding mask from frames to patches
             padding_mask = self.forward_padding_mask(features, padding_mask)
+            # Expand (copy) time mask across associated freq patches
+            padding_mask = padding_mask.unsqueeze(-1).expand(-1, -1, M)
+            # Collapse mel and time dim
+            padding_mask = padding_mask.reshape(B, -1)
+            # (B, T*M)
+            features = features.reshape(B, -1, C)
+            # (B, T*M, C)
+
+        if attn_mask is not None:
+            padding_mask |= attn_mask
+
+        # Apply layer wise normalisation
+        features = self.layer_norm(features)
+
+        # BUG: padding is computes over flattened spectrum
+        # i.e. padding in time starts to mask some frequency tokens...
+        # The above changes fixes this bug
+        # if padding_mask is not None:
+        #     padding_mask = self.forward_padding_mask(features, padding_mask)
 
         if self.post_extract_proj is not None:
             features = self.post_extract_proj(features)
