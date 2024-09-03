@@ -133,15 +133,21 @@ class BEATs(nn.Module):
         return padding_mask
 
     def preprocess(
-            self,
-            source: torch.Tensor,
-            fbank_mean: float = 0,
-            fbank_std: float = 0.5,
+        self,
+        source: torch.Tensor,
+        *,
+        fbank_mean: float = 0,
+        fbank_std: float = 0.5,
+        num_mel_bins = 128,
+        sample_frequency = 16_000,
+        frame_length = 25, #ms
+        frame_shift = 10, #ms
+        **kwargs
     ) -> torch.Tensor:
         fbanks = []
         for waveform in source:
             waveform = waveform.unsqueeze(0) * 2 ** 15
-            fbank = ta_kaldi.fbank(waveform, num_mel_bins=128, sample_frequency=16000, frame_length=25, frame_shift=10)
+            fbank = ta_kaldi.fbank(waveform, num_mel_bins=num_mel_bins, sample_frequency=sample_frequency, frame_length=frame_length, frame_shift=frame_shift)
             fbanks.append(fbank)
         fbank = torch.stack(fbanks, dim=0)
         fbank = (fbank - fbank_mean) / (2 * fbank_std)
